@@ -1,0 +1,9 @@
+{
+  "id": "mixed-outline",
+  "name": "Mixed Outline",
+  "version": "1.0.5",
+  "minAppVersion": "1.5.0",
+  "description": "Show headings and numbered Markdown list items together in a navigable outline.",
+  "author": "ming",
+  "isDesktopOnly": false
+}
