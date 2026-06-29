@@ -472,7 +472,7 @@ class MixedOutlineView extends ItemView {
 
     if (!shouldSyncToScroll && previousFilePath !== file.path) {
       this.collapsed.clear();
-      this.collapseNodesWithChildren(this.lastNodes);
+      this.collapseNodesDeeperThanDepth(root.children, 0);
     }
     this.lastRenderedFilePath = file.path;
 
@@ -602,6 +602,16 @@ class MixedOutlineView extends ItemView {
       if (node.children.length > 0 && !expandedIds.has(node.id)) {
         this.collapsed.add(node.id);
       }
+    }
+  }
+
+  collapseNodesDeeperThanDepth(nodes, expandedDepth, depth = 0) {
+    for (const node of nodes) {
+      if (node.children.length > 0 && depth > expandedDepth) {
+        this.collapsed.add(node.id);
+      }
+
+      this.collapseNodesDeeperThanDepth(node.children, expandedDepth, depth + 1);
     }
   }
 }
