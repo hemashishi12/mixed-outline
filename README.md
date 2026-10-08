@@ -1,136 +1,140 @@
-# Mixed Outline
+<p align="center">
+  <img src="docs/hero.svg" alt="Mixed Outline — Find your place. Keep writing." width="100%">
+</p>
 
-Mixed Outline is a local Obsidian plugin that shows Markdown headings and numbered list items together in one navigable outline.
+<p align="center">
+  <a href="https://github.com/hemashishi12/mixed-outline/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/hemashishi12/mixed-outline?style=flat-square&amp;color=a89aff"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-75dbd2?style=flat-square"></a>
+  <img alt="Obsidian 1.5.0 or later" src="https://img.shields.io/badge/Obsidian-1.5.0%2B-8175d8?style=flat-square">
+  <img alt="No runtime dependencies" src="https://img.shields.io/badge/runtime_dependencies-0-75dbd2?style=flat-square">
+</p>
 
-It is useful for notes that are structured with both headings and ordered lists, such as reading notes, plans, research outlines, and long-form drafts.
+<p align="center">
+  <b>Headings and numbered lists, together in one navigable outline.</b><br>
+  Follow the structure of a long note, then jump straight to your next thought.
+</p>
 
-## Features
+<p align="center">
+  <a href="#installation">Install</a> ·
+  <a href="#jump-to-end">Jump to end</a> ·
+  <a href="CHANGELOG.md">What's new</a> ·
+  <a href="README.zh-CN.md">简体中文</a>
+</p>
 
-- Opens a dedicated `Mixed Outline` view in the right sidebar.
-- Shows headings and ordered Markdown list items in a single tree.
-- Clicks an outline item to jump to the matching line in the active Markdown file.
-- Refreshes automatically when the editor changes, the active file changes, or the current file is modified.
-- Provides toolbar buttons for refresh, collapse all, and expand all.
-- Can automatically sync the outline to the current scroll position.
-- Skips YAML frontmatter and fenced code blocks while parsing.
-- Cleans common inline Markdown syntax for easier reading.
-- Supports startup auto-open through plugin settings.
+---
 
-## Commands
+## Why Mixed Outline?
 
-The plugin registers these Obsidian commands:
+Your ideas do not always fit inside headings. Reading notes, project plans, study guides, and long drafts often carry their structure in numbered lists too. Mixed Outline brings both into a single sidebar tree, so you can navigate the way you actually write.
 
-- `Open mixed outline`
-- `Refresh mixed outline`
-- `Toggle auto sync outline to scroll position`
+| Feature | What it does |
+| --- | --- |
+| **One connected outline** | Combines Markdown headings and numbered list items, including nested lists. |
+| **Click to navigate** | Takes you to the matching line in the note. |
+| **Jump to end ✨** | Moves to the bottom, focuses the editor, and leaves an empty line ready for writing. |
+| **Follow your reading** | Optional scroll sync expands the current path and highlights your position. |
+| **Keep the tree tidy** | Collapse or expand the outline with a single click. |
+| **Stay up to date** | Refreshes as you edit or switch notes. |
 
-It also adds a ribbon icon with the `list-tree` icon.
+The illustration above uses fictional sample content. No personal vault screenshots are included.
 
-## Settings
+## Installation
 
-| Setting | Default | Description |
+### From Obsidian
+
+1. Open **Settings → Community plugins → Browse**.
+2. Search for **Mixed Outline**, install it, and enable it.
+3. Click the **Open Mixed Outline** ribbon icon, or run **Mixed Outline: Open mixed outline** from the command palette.
+
+Already installed? Open **Settings → Community plugins → Check for updates** and update Mixed Outline.
+
+### Manual installation
+
+Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/hemashishi12/mixed-outline/releases/latest). Place all three in `<your-vault>/.obsidian/plugins/mixed-outline/`, reload Obsidian, and enable the plugin. Preserve `data.json` when upgrading; it contains your settings.
+
+Requires **Obsidian 1.5.0+**. The plugin uses Obsidian APIs without Node.js or Electron runtime dependencies and declares support for desktop and mobile. Version 1.1.0 was verified in desktop Obsidian; mobile has not been separately tested.
+
+## Jump to end
+
+Click the **down arrow above a horizontal line**, the last button in the outline toolbar. Its tooltip is **跳转到最后 / Jump to end**.
+
+The button brings the current note into editing mode, scrolls the final cursor position into view, and focuses the editor so you can start typing immediately.
+
+- If the note ends with text, one newline is appended.
+- If an empty final line already exists, the cursor moves there. Repeated clicks do not accumulate blank lines.
+- Empty notes are ready to type into without inserting extra lines.
+- Reading view switches to editing first. Live Preview and Source mode remain editable.
+- Existing text, including selected text and the contents of a final list item, is preserved.
+
+You can also run **Mixed Outline: Jump to end / 跳转到最后** from the command palette, or assign it a hotkey under **Settings → Hotkeys**. The toolbar button is disabled when no Markdown note is available.
+
+## A small example
+
+```markdown
+# Launch notes
+## Plan
+1. Define the idea
+2. Sketch the experience
+   1. Keep the outline clear
+   2. Make writing effortless
+## Next steps
+1. Share what you learned
+```
+
+The headings and numbered items appear together. Nested list items sit beneath their parent, and each entry links back to its source line.
+
+Mixed Outline recognizes ATX headings (`#` through `######`) and ordered list markers such as `1.` or `2)`. It skips YAML frontmatter, fenced code blocks, unordered lists, and task lists. Ordered items nested inside hidden unordered or task lists are also omitted.
+
+## Settings & commands
+
+| Setting | Default | Purpose |
 | --- | --- | --- |
-| Show headings | On | Include Markdown headings such as `#`, `##`, and `###`. |
-| Show ordered lists | On | Include numbered list items such as `1.` and `2)`. |
-| Strip Markdown formatting | On | Hide common inline Markdown syntax in the outline text. |
-| Maximum item length | `160` | Trim very long outline items. Values are clamped between `20` and `500`. |
-| Open on startup | Off | Open the Mixed Outline view when Obsidian starts. |
-| Auto sync to scroll position | Off | While browsing a Markdown file, expand only the outline path for the visible position and collapse other branches. |
+| Show headings | On | Include Markdown headings. |
+| Show ordered lists | On | Include numbered Markdown list items. |
+| Strip Markdown formatting | On | Simplify inline formatting in outline labels. |
+| Maximum item length | 160 | Limit label length, from 20 to 500 characters. |
+| Open on startup | Off | Open the sidebar when Obsidian starts. |
+| Auto sync to scroll position | Off | Follow the visible section, expanding its ancestors and collapsing unrelated branches. |
 
-## Scroll Sync
+Available commands: **Open mixed outline**, **Refresh mixed outline**, **Jump to end / 跳转到最后**, and **Toggle auto sync outline to scroll position**.
 
-The `Toggle auto sync outline to scroll position` command enables or disables automatic outline syncing.
+## Privacy
 
-When enabled, Mixed Outline listens to scrolling in the active Markdown view. It finds the outline item at the current visible line, expands that item's ancestor path, highlights the matching outline row, and collapses unrelated branches.
+Mixed Outline processes note content locally. It makes no network requests, collects no telemetry, and needs no account. Its settings are stored in the vault's plugin `data.json`. Jump to end edits only the targeted note and only appends a newline when needed.
 
-For example, if the current visible position is inside:
+## Development
 
-```text
-H1
-└── H2
-    └── 1. Current section
-        └── 1. Child section
+This is a small, directly editable JavaScript plugin. **There is no build step or dependency installation.**
+
+```sh
+git clone https://github.com/hemashishi12/mixed-outline.git
+cd mixed-outline
+node --check main.js
+node --test
 ```
 
-Mixed Outline expands `H1` and `H2`, highlights `1. Current section`, and keeps `1. Child section` collapsed unless the scroll position moves into it.
+Use Node.js 18+ for the tests. Copy the three plugin files into a development vault and reload the plugin to try changes.
 
-## Outline Rules
+| File | Purpose |
+| --- | --- |
+| `main.js` | Plugin lifecycle, parser, outline UI, navigation, and settings. |
+| `styles.css` | Theme-aware sidebar styling. |
+| `manifest.json` | Plugin identity, version, and minimum Obsidian version. |
+| `versions.json` | Release compatibility mapping. |
+| `test/` | Navigation regression tests using Node's built-in test runner. |
 
-Mixed Outline parses the active Markdown document line by line.
+Implementation notes:
 
-Headings are detected from ATX heading syntax:
+- Reading view must switch to `source` view state before placing an editable caret. This state covers both Source mode and Live Preview.
+- Use `editor.replaceRange()` at the final position to preserve selected text and normal undo history. Do not rewrite the whole note or simulate Enter, which can continue a list.
+- Recheck the target file after asynchronous view changes, and ignore overlapping invocations.
+- Clicking the sidebar can change the active pane. Resolve the current Markdown view using the existing active/recent-note tracking.
+- For Windows installations where `obsidian` is not on PATH, invoke `Obsidian.com` in the installation directory to use CLI diagnostics. Background-window timers can be throttled during live checks.
 
-```markdown
-# Heading 1
-## Heading 2
-### Heading 3
-```
+To release: update `manifest.json`, add the version to `versions.json`, and publish a GitHub release with an exact numeric tag such as `1.1.0` (**no `v` prefix**). Attach `main.js`, `manifest.json`, and `styles.css`. The existing Obsidian community catalog entry points at this repository; normal plugin updates do not require another catalog submission.
 
-Ordered list items are detected from numbered Markdown list syntax:
+## Feedback & license
 
-```markdown
-1. First item
-2. Second item
-   1. Nested item
-```
+[Report a bug or suggest an improvement](https://github.com/hemashishi12/mixed-outline/issues). Include your Obsidian version, plugin version, and a minimal example using non-private sample text.
 
-The list level is calculated relative to the nearest heading. For example, a top-level numbered item under `## Topic` is displayed as a child of that heading.
-
-The plugin intentionally hides:
-
-- unordered list items, such as `- item`, `+ item`, and `* item`
-- task list items, such as `- [ ] task`
-- ordered list items nested under hidden unordered or task lists
-- content inside fenced code blocks
-- YAML frontmatter
-
-## Architecture
-
-The plugin is implemented as a small single-file Obsidian plugin in `main.js`, with styles in `styles.css`.
-
-Main parts:
-
-- `MixedOutlinePlugin`: plugin lifecycle, Obsidian command registration, event handling, view activation, settings persistence, and navigation back to Markdown lines.
-- `MixedOutlineView`: the right-sidebar `ItemView`, toolbar rendering, tree rendering, active scroll path rendering, collapse state, and click handling.
-- `MixedOutlineSettingTab`: plugin settings UI.
-- `buildMixedOutlineTree()`: converts parsed outline entries into a nested tree.
-- `parseMixedOutlineEntries()`: scans Markdown source and extracts heading/list outline entries.
-- `addDisplayMarkers()`: recalculates display numbering for ordered list items.
-- `findNodePathForLine()`: finds the outline path that contains the current visible Markdown line.
-
-The plugin exports a small `__test` object from `main.js` for parser-focused testing:
-
-```js
-module.exports.__test = {
-  buildMixedOutlineTree,
-  parseMixedOutlineEntries,
-  addDisplayMarkers,
-};
-```
-
-## Files
-
-```text
-mixed-outline/
-├── manifest.json
-├── main.js
-├── styles.css
-└── README.md
-```
-
-## Development Notes
-
-This plugin currently ships as compiled JavaScript only. There is no TypeScript source tree in this plugin directory.
-
-When changing parser behavior, focus on these functions:
-
-- `parseHeading()`
-- `parseListItem()`
-- `parseMixedOutlineEntries()`
-- `buildMixedOutlineTree()`
-
-When changing UI behavior, focus on:
-
-- `MixedOutlineView.render()`
-- `MixedOutlineView.renderNode()`
-- `styles.css`
+Released under the [MIT License](LICENSE).

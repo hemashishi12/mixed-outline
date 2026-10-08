@@ -1,0 +1,13 @@
+# Vault state and personal settings
+.obsidian/
+data.json
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+Thumbs.db
+node_modules/
+coverage/
+playwright-output/
+*.zip

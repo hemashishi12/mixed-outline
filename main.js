@@ -57,6 +57,12 @@ class MixedOutlinePlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "jump-to-end",
+      name: "Jump to end / 跳转到最后",
+      callback: () => this.jumpToEnd(),
+    });
+
+    this.addCommand({
       id: "toggle-auto-sync-to-scroll",
       name: "Toggle auto sync outline to scroll position",
       callback: () => this.toggleAutoSyncToScroll(),
@@ -384,6 +390,57 @@ class MixedOutlinePlugin extends Plugin {
     this.pendingEditorText = view.editor.getValue();
   }
 
+  async jumpToEnd() {
+    if (this.jumpingToEnd) return;
+
+    const view = this.getCurrentMarkdownView();
+    if (!view?.file) {
+      new Notice("Mixed Outline: open a Markdown note first.");
+      return;
+    }
+
+    this.jumpingToEnd = true;
+    const file = view.file;
+    const leaf = view.leaf;
+    try {
+      // Reading view has no editable caret; retain the note's other view state.
+      if (view.getMode() === "preview") {
+        await leaf.setViewState({
+          ...leaf.getViewState(),
+          state: { ...view.getState(), mode: "source" },
+        });
+      }
+      await this.app.workspace.revealLeaf(leaf);
+
+      // A note may have changed while the view was being opened.
+      if (!(leaf.view instanceof MarkdownView) || leaf.view.file !== file) return;
+
+      this.app.workspace.setActiveLeaf(leaf, { focus: true });
+      const editor = leaf.view.editor;
+      let line = editor.lastLine();
+      const lastText = editor.getLine(line);
+      // Reuse an existing empty final line, so repeated clicks do not add blanks.
+      if (lastText.length > 0) {
+        editor.replaceRange("\n", { line, ch: lastText.length });
+        line += 1;
+      }
+      const pos = { line, ch: 0 };
+      editor.setCursor(pos);
+      editor.focus();
+      editor.scrollIntoView({ from: pos, to: pos }, true);
+
+      this.currentFile = file;
+      this.pendingEditorText = editor.getValue();
+      this.syncScrollListener();
+      this.scheduleRefresh();
+    } catch (error) {
+      console.error("Mixed Outline: jump to end failed", error);
+      new Notice("Mixed Outline: could not jump to the end of this note.");
+    } finally {
+      this.jumpingToEnd = false;
+    }
+  }
+
   findMarkdownLeaf(file) {
     return this.app.workspace.getLeavesOfType("markdown").find((leaf) => {
       const view = leaf.view;
@@ -443,6 +500,15 @@ class MixedOutlineView extends ItemView {
     createIconButton(actionsEl, "chevrons-up-down", "Expand all", () => {
       this.expandAll();
     });
+
+    const jumpButton = createIconButton(
+      actionsEl,
+      "arrow-down-to-line",
+      "跳转到最后 / Jump to end",
+      () => this.plugin.jumpToEnd()
+    );
+    jumpButton.addClass("mixed-outline-jump-to-end");
+    jumpButton.disabled = !file;
 
     if (!file) {
       this.lastRenderedFilePath = null;
