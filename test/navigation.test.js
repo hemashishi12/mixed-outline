@@ -11,6 +11,7 @@ function setup(source = '', mode = 'source') {
     module: { exports: {} },
     console: { error() {} },
     require(id) {
+      if (id === '@codemirror/view') return { EditorView: {} };
       assert.equal(id, 'obsidian');
       return {
         MarkdownView,

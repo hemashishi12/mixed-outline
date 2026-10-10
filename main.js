@@ -6,8 +6,10 @@ const {
   PluginSettingTab,
   Setting,
   TFile,
+  editorInfoField,
   setIcon,
 } = require("obsidian");
+const { EditorView } = require("@codemirror/view");
 
 const VIEW_TYPE_MIXED_OUTLINE = "mixed-outline-view";
 
@@ -18,6 +20,7 @@ const DEFAULT_SETTINGS = {
   maxItemLength: 160,
   openOnStartup: false,
   autoSyncToScroll: false,
+  autoSyncToCursor: true,
 };
 
 class MixedOutlinePlugin extends Plugin {
@@ -33,6 +36,20 @@ class MixedOutlinePlugin extends Plugin {
     this.activeScrollPath = null;
     this.scrollSyncVersion = 0;
     this.suppressScrollSyncUntil = 0;
+    this.cursorSyncRequest = 0;
+
+    this.registerEditorExtension(EditorView.updateListener.of((update) => {
+      if (!update.view.hasFocus ||
+          !(update.selectionSet || update.docChanged || update.focusChanged)) {
+        return;
+      }
+      const info = update.state.field(editorInfoField, false);
+      const view = info instanceof MarkdownView ? info : info?.view;
+      if (view instanceof MarkdownView) {
+        const line = update.state.doc.lineAt(update.state.selection.main.head).number - 1;
+        this.scheduleCursorSync(view, line);
+      }
+    }));
 
     this.registerView(
       VIEW_TYPE_MIXED_OUTLINE,
@@ -105,6 +122,7 @@ class MixedOutlinePlugin extends Plugin {
         this.pendingEditorText = view.editor.getValue();
         this.scheduleRefresh();
         this.syncScrollListener();
+        this.scheduleCursorSync(view);
       })
     );
 
@@ -137,6 +155,7 @@ class MixedOutlinePlugin extends Plugin {
   }
 
   onunload() {
+    this.cursorSyncRequest += 1;
     if (this.refreshTimer) {
       window.clearTimeout(this.refreshTimer);
       this.refreshTimer = null;
@@ -158,6 +177,7 @@ class MixedOutlinePlugin extends Plugin {
   async saveSettings() {
     await this.saveData(this.settings);
     this.syncScrollListener();
+    this.scheduleCursorSync(this.getCurrentMarkdownView());
     await this.refreshViews();
   }
 
@@ -166,7 +186,7 @@ class MixedOutlinePlugin extends Plugin {
     await this.saveSettings();
     if (this.settings.autoSyncToScroll) {
       this.scheduleScrollSync(0);
-    } else {
+    } else if (this.activeScrollPath?.source !== "cursor") {
       this.activeScrollPath = null;
     }
     new Notice(
@@ -247,6 +267,30 @@ class MixedOutlinePlugin extends Plugin {
     }, delay);
   }
 
+  scheduleCursorSync(view, line = view?.editor?.getCursor?.().line) {
+    if (!this.settings.autoSyncToCursor || !Number.isFinite(line)) return;
+    const request = ++this.cursorSyncRequest;
+    // Finish the CodeMirror update first, without waiting for a debounce timer.
+    Promise.resolve().then(() => {
+      if (request !== this.cursorSyncRequest || !this.settings.autoSyncToCursor ||
+          !(view instanceof MarkdownView) || !view.file ||
+          view.getMode() !== "source" ||
+          this.app.workspace.getActiveViewOfType(MarkdownView) !== view) return;
+      if (this.scrollTimer) {
+        window.clearTimeout(this.scrollTimer);
+        this.scrollTimer = null;
+      }
+      // Cursor movement can scroll the editor. Keep that scroll from replacing
+      // the selected line with the first visible line.
+      this.suppressScrollSync(200);
+      this.currentFile = view.file;
+      this.pendingEditorText = view.editor.getValue();
+      this.activeScrollPath = { filePath: view.file.path, line, source: "cursor" };
+      this.scrollSyncVersion += 1;
+      return this.refreshViews();
+    }).catch(error => console.error("Mixed Outline: cursor sync failed", error));
+  }
+
   syncScrollListener() {
     this.detachScrollListener();
 
@@ -322,6 +366,7 @@ class MixedOutlinePlugin extends Plugin {
     this.activeScrollPath = {
       filePath: view.file.path,
       line: Math.max(0, visibleLine),
+      source: "scroll",
     };
     this.scrollSyncVersion += 1;
 
@@ -522,15 +567,19 @@ class MixedOutlineView extends ItemView {
 
     const root = buildMixedOutlineTree(source, file.path, this.plugin.settings);
     this.lastNodes = flattenTree(root.children);
+    const syncEnabled = this.plugin.activeScrollPath?.source === "cursor"
+      ? this.plugin.settings.autoSyncToCursor
+      : this.plugin.settings.autoSyncToScroll;
     const hasScrollSyncForFile =
-      this.plugin.settings.autoSyncToScroll &&
+      syncEnabled &&
       this.plugin.activeScrollPath?.filePath === file.path;
     const shouldSyncToScroll =
       hasScrollSyncForFile &&
       this.lastAppliedScrollSyncVersion !== this.plugin.scrollSyncVersion;
 
     if (shouldSyncToScroll) {
-      this.syncCollapsedToLine(root.children, this.plugin.activeScrollPath.line);
+      this.syncCollapsedToLine(root.children, this.plugin.activeScrollPath.line,
+        this.plugin.activeScrollPath.source === "cursor");
       this.lastAppliedScrollSyncVersion = this.plugin.scrollSyncVersion;
     } else if (!hasScrollSyncForFile) {
       this.activeNodeId = null;
@@ -559,7 +608,7 @@ class MixedOutlineView extends ItemView {
       scrollNodeIntoView(treeEl, this.activeNodeId);
     }
 
-    if (previousFilePath === file.path) {
+    if (!shouldSyncToScroll && previousFilePath === file.path) {
       restoreScrollTop(treeEl, previousScrollTop);
     }
   }
@@ -656,10 +705,12 @@ class MixedOutlineView extends ItemView {
     this.render();
   }
 
-  syncCollapsedToLine(nodes, line) {
+  syncCollapsedToLine(nodes, line, expandActive = false) {
     const activePath = findNodePathForLine(nodes, line);
     const activeNode = activePath[activePath.length - 1] ?? null;
-    const expandedIds = new Set(activePath.slice(0, -1).map((node) => node.id));
+    const expandedIds = new Set(
+      (expandActive ? activePath : activePath.slice(0, -1)).map((node) => node.id)
+    );
 
     this.activeNodeId = activeNode?.id ?? null;
     this.collapsed.clear();
@@ -751,6 +802,19 @@ class MixedOutlineSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
+      .setName("Follow cursor / 跟随光标")
+      .setDesc("Immediately highlight and expand the outline at the cursor when clicking, moving with arrow keys, or editing. / 点击、方向键移动或编辑时，立即展开光标对应的大纲。")
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.autoSyncToCursor).onChange(async (value) => {
+          this.plugin.settings.autoSyncToCursor = value;
+          if (!value && this.plugin.activeScrollPath?.source === "cursor") {
+            this.plugin.activeScrollPath = null;
+          }
+          await this.plugin.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
       .setName("Auto sync to scroll position")
       .setDesc("While browsing a Markdown file, expand only the outline path for the visible position and collapse other branches.")
       .addToggle((toggle) =>
@@ -783,9 +847,12 @@ function buildMixedOutlineTree(source, filePath, settings) {
   const stack = [root];
 
   for (const entry of entries) {
+    // A heading ends the preceding list, even when heading levels are skipped.
+    // Only headings can be ancestors of another heading.
     while (
       stack.length > 1 &&
-      stack[stack.length - 1].effectiveLevel >= entry.effectiveLevel
+      ((entry.type === "heading" && stack[stack.length - 1].type === "list") ||
+        stack[stack.length - 1].effectiveLevel >= entry.effectiveLevel)
     ) {
       stack.pop();
     }
