@@ -21,13 +21,13 @@
 
 ## 安装与更新
 
-### 1.2.0 更新亮点
+### 1.3.0 更新亮点
 
-- **光标移动，大纲立即响应**：点击正文、方向键移动或编辑时，直接展开并高亮对应位置，不再等待滚动。默认开启，可在设置中关闭「Follow cursor / 跟随光标」。
-- **修复标题被列表折叠的问题**：数字列表后面的标题正确归属上级标题，跳级标题也适用；折叠前面的列表不会隐藏后面的标题。
-- **高亮项保持可见**：定位大纲后，不再被旧的滚动位置覆盖。
+- **一键滚动到顶部**：工具栏首个按钮改为顶部定位，聚焦第一行开头，不修改正文；手动刷新保留在命令面板。
+- **顶部、底部快捷键分别配置**：在「设置 → 快捷键」中搜索 Mixed Outline，即可绑定或修改两个命令的快捷键。
+- **保留已有习惯**：底部命令 ID 和已绑定快捷键保持不变，继续按需补一个换行并聚焦空白末行。
 
-升级保留已有设置。查看[本次 Release](https://github.com/hemashishi12/mixed-outline/releases/tag/1.2.0) 或[完整更新记录](CHANGELOG.md)。
+升级保留已有设置。查看[本次 Release](https://github.com/hemashishi12/mixed-outline/releases/tag/1.3.0) 或[完整更新记录](CHANGELOG.md)。
 
 ### 安装方法
 
@@ -39,7 +39,7 @@
 
 手动安装：从[最新 Release](https://github.com/hemashishi12/mixed-outline/releases/latest) 下载 `main.js`、`manifest.json`、`styles.css`，放入 `<你的库>/.obsidian/plugins/mixed-outline/`，重载 Obsidian 后启用。升级时保留存储个人设置的 `data.json`。
 
-最低要求为 **Obsidian 1.5.0**。插件使用 Obsidian 及其内置 CodeMirror API，无 Node.js / Electron 运行时依赖，声明兼容桌面端和移动端。本次 1.2.0 已在桌面端实测；移动端和最低兼容版本尚未单独验证。
+最低要求为 **Obsidian 1.5.0**。插件使用 Obsidian 及其内置 CodeMirror API，无 Node.js / Electron 运行时依赖，声明兼容桌面端和移动端。本次 1.3.0 已在桌面端实测；移动端和最低兼容版本尚未单独验证。
 
 ## 跟随光标
 

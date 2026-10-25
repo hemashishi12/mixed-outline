@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.3.0 — 2026-10-25
+
+### Added
+
+- **Jump to start / 滚动到顶部** moves to the first character and focuses the editor without changing note content. Reading view switches to editing first.
+- A new start-navigation command supports a custom hotkey under **Settings → Hotkeys**. The existing end command now also includes **滚动到底部** in its name for easier discovery; its command ID and assigned hotkeys are preserved. Neither command has a default hotkey.
+- Regression coverage for start navigation, empty and long notes, Reading view, sidebar focus, file changes, activation failures, and opposing navigation commands.
+
+### Changed
+
+- The first toolbar button is now an up-to-line arrow instead of Refresh. Manual refresh remains available in the command palette.
+- Start/end navigation ignores overlapping invocations to prevent competing view changes.
+
+### Upgrade notes
+
+Existing settings and end-navigation hotkeys are preserved. Requires Obsidian 1.5.0+. All 31 automated tests pass, with 8 desktop runtime checks covering the toolbar, navigation commands, scrolling, content preservation, and Reading view. Mobile and minimum-version compatibility have not been separately tested.
+
+### 中文说明
+
+新增「滚动到顶部」，替换工具栏原来的刷新按钮；手动刷新仍可通过命令面板执行。在「设置 → 快捷键」中搜索 Mixed Outline，可分别绑定或修改顶部、底部快捷键。已有底部快捷键和插件设置保留。顶部定位不修改正文；底部继续保留按需补一个换行并聚焦空白末行的行为。
+
 ## 1.2.0 — 2026-10-10
 
 ### Added

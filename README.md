@@ -27,13 +27,13 @@
 
 Your ideas do not always fit inside headings. Reading notes, project plans, study guides, and long drafts often carry their structure in numbered lists too. Mixed Outline brings both into a single sidebar tree, so you can navigate the way you actually write.
 
-## What's new in 1.2.0
+## What's new in 1.3.0
 
-- **Follow your cursor immediately.** Clicking, using arrow keys, or editing expands and highlights the matching outline branch without waiting for a scroll. Enabled by default; turn off **Follow cursor / 跟随光标** to keep manual control.
-- **Headings stay out of preceding lists.** A heading after a numbered list is now attached to its heading parent, even when heading levels are skipped. Collapsing that list no longer hides the heading.
-- **Keep the active entry in view.** Outline scrolling no longer restores an old position over a newly highlighted entry.
+- **Jump to the top.** The first toolbar button now moves to the start of the note and focuses the editor without changing its text. It replaces Refresh; manual refresh remains in the command palette.
+- **Customize both navigation hotkeys.** Open **Settings → Hotkeys**, search **Mixed Outline**, and bind **Jump to start / 滚动到顶部** and **Jump to end / 跳转到最后（滚动到底部）** separately.
+- **Keep your existing shortcuts.** The end command retains its ID and existing hotkeys, including its append-one-newline behavior.
 
-Existing settings are preserved. See the [release notes](https://github.com/hemashishi12/mixed-outline/releases/tag/1.2.0) or [full changelog](CHANGELOG.md).
+Existing settings are preserved. See the [release notes](https://github.com/hemashishi12/mixed-outline/releases/tag/1.3.0) or [full changelog](CHANGELOG.md).
 
 ## Features
 
@@ -65,7 +65,7 @@ Already installed? Open **Settings → Community plugins → Check for updates**
 
 Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/hemashishi12/mixed-outline/releases/latest). Place all three in `<your-vault>/.obsidian/plugins/mixed-outline/`, reload Obsidian, and enable the plugin. Preserve `data.json` when upgrading; it contains your settings.
 
-Requires **Obsidian 1.5.0+**. The plugin uses Obsidian and its bundled CodeMirror APIs, with no Node.js or Electron runtime dependencies. Desktop and mobile are declared supported; version 1.2.0 was verified in desktop Obsidian, while mobile and the minimum supported Obsidian version have not been separately tested.
+Requires **Obsidian 1.5.0+**. The plugin uses Obsidian and its bundled CodeMirror APIs, with no Node.js or Electron runtime dependencies. Desktop and mobile are declared supported; version 1.3.0 was verified in desktop Obsidian, while mobile and the minimum supported Obsidian version have not been separately tested.
 
 ## Follow your cursor
 
@@ -193,7 +193,7 @@ Implementation notes:
 - Register cursor tracking through `registerEditorExtension()` and CodeMirror's `updateListener`. In the tested Obsidian version, `editorInfoField` is the Markdown view itself; accept a wrapped `.view` too. Coalesce selection changes in a microtask after the editor update, and ignore inactive editors.
 - Cursor movement may scroll the editor. Cancel pending scroll sync and briefly suppress incidental scroll so it cannot replace the selected line with the viewport's first line. Do not restore the outline's old scroll position after revealing an active entry.
 
-To release: update `manifest.json`, add the version to `versions.json`, and publish a GitHub release with an exact numeric tag such as `1.2.0` (**no `v` prefix**). Attach `main.js`, `manifest.json`, and `styles.css`. The existing Obsidian community catalog entry points at this repository; [normal updates do not require another catalog submission](https://docs.obsidian.md/plugins/releasing/submit-plugin).
+To release: update `manifest.json`, add the version to `versions.json`, and publish a GitHub release with an exact numeric tag such as `1.3.0` (**no `v` prefix**). Attach `main.js`, `manifest.json`, and `styles.css`. The existing Obsidian community catalog entry points at this repository; [normal updates do not require another catalog submission](https://docs.obsidian.md/plugins/releasing/submit-plugin).
 
 ## Feedback & license
 
