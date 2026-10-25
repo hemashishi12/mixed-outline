@@ -74,8 +74,14 @@ class MixedOutlinePlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "jump-to-start",
+      name: "Jump to start / 滚动到顶部",
+      callback: () => this.jumpToStart(),
+    });
+
+    this.addCommand({
       id: "jump-to-end",
-      name: "Jump to end / 跳转到最后",
+      name: "Jump to end / 跳转到最后（滚动到底部）",
       callback: () => this.jumpToEnd(),
     });
 
@@ -435,8 +441,49 @@ class MixedOutlinePlugin extends Plugin {
     this.pendingEditorText = view.editor.getValue();
   }
 
+  async jumpToStart() {
+    if (this.jumpingToStart || this.jumpingToEnd) return;
+
+    const view = this.getCurrentMarkdownView();
+    if (!view?.file) {
+      new Notice("Mixed Outline: open a Markdown note first.");
+      return;
+    }
+
+    this.jumpingToStart = true;
+    const file = view.file;
+    const leaf = view.leaf;
+    try {
+      if (view.getMode() === "preview") {
+        await leaf.setViewState({
+          ...leaf.getViewState(),
+          state: { ...view.getState(), mode: "source" },
+        });
+      }
+      await this.app.workspace.revealLeaf(leaf);
+      if (!(leaf.view instanceof MarkdownView) || leaf.view.file !== file) return;
+
+      this.app.workspace.setActiveLeaf(leaf, { focus: true });
+      const editor = leaf.view.editor;
+      const pos = { line: 0, ch: 0 };
+      editor.setCursor(pos);
+      editor.focus();
+      editor.scrollIntoView({ from: pos, to: pos }, true);
+
+      this.currentFile = file;
+      this.pendingEditorText = editor.getValue();
+      this.syncScrollListener();
+      this.scheduleRefresh();
+    } catch (error) {
+      console.error("Mixed Outline: jump to start failed", error);
+      new Notice("Mixed Outline: could not jump to the start of this note.");
+    } finally {
+      this.jumpingToStart = false;
+    }
+  }
+
   async jumpToEnd() {
-    if (this.jumpingToEnd) return;
+    if (this.jumpingToEnd || this.jumpingToStart) return;
 
     const view = this.getCurrentMarkdownView();
     if (!view?.file) {
@@ -536,9 +583,14 @@ class MixedOutlineView extends ItemView {
     titleEl.setText(file ? file.basename : "No active Markdown file");
 
     const actionsEl = toolbar.createDiv("mixed-outline-actions");
-    createIconButton(actionsEl, "refresh-cw", "Refresh", () => {
-      this.plugin.refreshViews();
-    });
+    const startButton = createIconButton(
+      actionsEl,
+      "arrow-up-to-line",
+      "滚动到顶部 / Jump to start",
+      () => this.plugin.jumpToStart()
+    );
+    startButton.addClass("mixed-outline-jump-to-start");
+    startButton.disabled = !file;
     createIconButton(actionsEl, "chevrons-down-up", "Collapse all", () => {
       this.collapseAll();
     });

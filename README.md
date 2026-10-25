@@ -42,7 +42,9 @@ Existing settings are preserved. See the [release notes](https://github.com/hema
 | **One connected outline** | Combines Markdown headings and numbered list items, including nested lists. |
 | **Click to navigate** | Takes you to the matching line in the note. |
 | **Follow your cursor** | Expands the current branch as you click, move the caret, or type. |
+| **Jump to start** | Moves to the top and focuses the first character without changing the note. |
 | **Jump to end ✨** | Moves to the bottom, focuses the editor, and leaves an empty line ready for writing. |
+| **Custom navigation hotkeys** | Assign separate start/end shortcuts in Obsidian's Hotkeys settings. |
 | **Follow your reading** | Optional scroll sync expands the current path and highlights your position. |
 | **Keep the tree tidy** | Collapse or expand the outline with a single click. |
 | **Stay up to date** | Refreshes as you edit or switch notes. |
@@ -75,7 +77,20 @@ For ordinary paragraphs, the preceding heading or numbered item determines the c
 
 To expand and collapse the tree entirely by hand, turn both settings off.
 
-## Jump to end
+## Jump to start and end
+
+Click the **up arrow above a horizontal line**, the first button in the outline toolbar, to **滚动到顶部 / Jump to start**. It replaces the Refresh button, moves to line 1, column 1, and focuses the editor without changing the note. Reading view switches to editing first. Manual refresh remains available as **Mixed Outline: Refresh mixed outline** in the command palette.
+
+### Custom hotkeys
+
+Open **Settings → Hotkeys** and search for **Mixed Outline**. Assign or change shortcuts for:
+
+- **Jump to start / 滚动到顶部**
+- **Jump to end / 跳转到最后（滚动到底部）**
+
+Both commands use Obsidian's standard hotkey editor and have no default binding. The existing `mixed-outline:jump-to-end` command ID is unchanged, so previously assigned shortcuts are preserved. They also work from the command palette when the outline sidebar is closed. Both toolbar buttons are disabled when no Markdown note is available.
+
+### Jump to end
 
 Click the **down arrow above a horizontal line**, the last button in the outline toolbar. Its tooltip is **跳转到最后 / Jump to end**.
 
@@ -87,7 +102,7 @@ The button brings the current note into editing mode, scrolls the final cursor p
 - Reading view switches to editing first. Live Preview and Source mode remain editable.
 - Existing text, including selected text and the contents of a final list item, is preserved.
 
-You can also run **Mixed Outline: Jump to end / 跳转到最后** from the command palette, or assign it a hotkey under **Settings → Hotkeys**. The toolbar button is disabled when no Markdown note is available.
+The command palette and its custom hotkey perform the same action as the toolbar button.
 
 ## A small example
 
@@ -138,7 +153,7 @@ Mixed Outline recognizes ATX headings (`#` through `######`) and ordered list ma
 | Follow cursor / 跟随光标 | On | Immediately highlight and expand the cursor's entry and its ancestors. |
 | Auto sync to scroll position | Off | Follow the visible section, expanding its ancestors and collapsing unrelated branches. |
 
-Available commands: **Open mixed outline**, **Refresh mixed outline**, **Jump to end / 跳转到最后**, and **Toggle auto sync outline to scroll position**.
+Available commands: **Open mixed outline**, **Refresh mixed outline**, **Jump to start / 滚动到顶部**, **Jump to end / 跳转到最后（滚动到底部）**, and **Toggle auto sync outline to scroll position**.
 
 ## Privacy
 
@@ -171,8 +186,9 @@ Implementation notes:
 - Reading view must switch to `source` view state before placing an editable caret. This state covers both Source mode and Live Preview.
 - Use `editor.replaceRange()` at the final position to preserve selected text and normal undo history. Do not rewrite the whole note or simulate Enter, which can continue a list.
 - Recheck the target file after asynchronous view changes, and ignore overlapping invocations.
+- Start/end navigation shares an overlap guard so opposing commands cannot race during view activation. Keep command IDs stable: Obsidian stores custom hotkeys by ID, independently of translated command names.
 - Clicking the sidebar can change the active pane. Resolve the current Markdown view using the existing active/recent-note tracking.
-- For Windows installations where `obsidian` is not on PATH, invoke `Obsidian.com` in the installation directory to use CLI diagnostics. Background-window timers can be throttled during live checks.
+- For Windows installations where `obsidian` is not on PATH, invoke `Obsidian.com` in the installation directory to use CLI diagnostics. Background-window timers can be throttled, and `requestAnimationFrame` can pause entirely while the window is hidden; restore the test window before waiting for rendered-scroll assertions.
 - Heading levels and list depths share `effectiveLevel`, but cannot be compared blindly: a new heading must first pop list nodes from the ancestor stack.
 - Register cursor tracking through `registerEditorExtension()` and CodeMirror's `updateListener`. In the tested Obsidian version, `editorInfoField` is the Markdown view itself; accept a wrapped `.view` too. Coalesce selection changes in a microtask after the editor update, and ignore inactive editors.
 - Cursor movement may scroll the editor. Cancel pending scroll sync and briefly suppress incidental scroll so it cannot replace the selected line with the viewport's first line. Do not restore the outline's old scroll position after revealing an active entry.

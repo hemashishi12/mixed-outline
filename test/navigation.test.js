@@ -28,6 +28,7 @@ function setup(source = '', mode = 'source') {
   let cursor;
   let focused = false;
   let edits = 0;
+  let scrolled;
   const editor = {
     lastLine: () => value.split('\n').length - 1,
     getLine: line => value.split('\n')[line],
@@ -40,7 +41,7 @@ function setup(source = '', mode = 'source') {
     },
     setCursor: pos => { cursor = pos; },
     focus: () => { focused = true; },
-    scrollIntoView(range) { assert.equal(range.from.line, editor.lastLine()); },
+    scrollIntoView(range) { scrolled = range.from; },
   };
   const file = { path: 'Sample.md' };
   const view = Object.assign(new MarkdownView(), {
@@ -65,7 +66,7 @@ function setup(source = '', mode = 'source') {
   } };
   plugin.syncScrollListener = () => {};
   plugin.scheduleRefresh = () => {};
-  return { plugin, view, leaf, notices, editor, state: () => ({ value, cursor, focused, edits, mode }) };
+  return { plugin, view, leaf, notices, editor, state: () => ({ value, cursor, focused, edits, mode, scrolled }) };
 }
 
 for (const [name, source, expected] of [
@@ -85,6 +86,7 @@ for (const [name, source, expected] of [
     assert.equal(state.value, expected);
     assert.equal(state.cursor.line, expected.split('\n').length - 1);
     assert.equal(state.cursor.ch, 0);
+    assert.equal(state.scrolled.line, state.cursor.line);
     assert.equal(state.focused, true);
     assert.equal(state.edits, source === expected ? 0 : 1);
     await f.plugin.jumpToEnd();
@@ -152,4 +154,70 @@ test('a failed view activation releases the guard for the next attempt', async (
   f.plugin.app.workspace.revealLeaf = async () => {};
   await f.plugin.jumpToEnd();
   assert.equal(f.state().value, 'Text\n');
+});
+
+for (const source of ['', '# Heading\n1. Keep this item', 'Line\n'.repeat(10000)]) {
+  for (const mode of ['source', 'preview']) {
+    test(`jump to start focuses the first position without edits: ${mode}, ${source.length} chars`, async () => {
+      const f = setup(source, mode);
+      await f.plugin.jumpToStart();
+      const state = f.state();
+      assert.equal(state.value, source);
+      assert.equal(state.edits, 0);
+      assert.equal(state.cursor.line, 0);
+      assert.equal(state.cursor.ch, 0);
+      assert.equal(state.scrolled.line, 0);
+      assert.equal(state.focused, true);
+      assert.equal(state.mode, 'source');
+    });
+  }
+}
+
+test('jump to start resolves the tracked note when the sidebar has focus', async () => {
+  const f = setup('First\nLast');
+  f.plugin.currentFile = f.view.file;
+  f.plugin.app.workspace.getActiveViewOfType = () => null;
+  await f.plugin.jumpToStart();
+  assert.equal(f.state().cursor.line, 0);
+  assert.equal(f.state().edits, 0);
+});
+
+test('jump to start handles missing notes and file changes without moving the cursor', async () => {
+  const missing = setup('Text');
+  missing.plugin.getCurrentMarkdownView = () => null;
+  await missing.plugin.jumpToStart();
+  assert.equal(missing.notices.length, 1);
+  assert.equal(missing.state().cursor, undefined);
+
+  const changed = setup('Text', 'preview');
+  changed.leaf.setViewState = async () => { changed.view.file = { path: 'Other.md' }; };
+  await changed.plugin.jumpToStart();
+  assert.equal(changed.state().cursor, undefined);
+  assert.equal(changed.plugin.jumpingToStart, false);
+});
+
+test('jump to start releases its guard after failure', async () => {
+  const f = setup('Text');
+  f.plugin.app.workspace.revealLeaf = async () => { throw new Error('Unavailable'); };
+  await f.plugin.jumpToStart();
+  assert.equal(f.plugin.jumpingToStart, false);
+  assert.equal(f.notices.length, 1);
+  f.plugin.app.workspace.revealLeaf = async () => {};
+  await f.plugin.jumpToStart();
+  assert.equal(f.state().cursor.line, 0);
+});
+
+test('start and end navigation cannot race during view activation', async () => {
+  for (const firstMethod of ['jumpToStart', 'jumpToEnd']) {
+    const f = setup('First\nLast');
+    let resume;
+    f.plugin.app.workspace.revealLeaf = () => new Promise(resolve => { resume = resolve; });
+    const first = f.plugin[firstMethod]();
+    await f.plugin.jumpToStart();
+    await f.plugin.jumpToEnd();
+    resume();
+    await first;
+    assert.equal(f.state().cursor.line, firstMethod === 'jumpToStart' ? 0 : 2);
+    assert.equal(f.state().edits, firstMethod === 'jumpToStart' ? 0 : 1);
+  }
 });
