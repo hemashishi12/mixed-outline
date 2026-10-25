@@ -4,11 +4,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-async function setup() {
+async function setup(data = { outlineMode: 'cursor' }) {
   class MarkdownView {}
   class Plugin {
-    async loadData() { return {}; }
+    async loadData() { return structuredClone(data); }
     registerEditorExtension(listener) { this.listener = listener; }
+    registerMarkdownPostProcessor() {}
     registerView() {}
     addRibbonIcon() { return { addClass() {} }; }
     addCommand() {}
@@ -47,8 +48,9 @@ async function setup() {
 
 test('cursor listener accepts the editor view and wrapped editor info without scrolling', async () => {
   const { p, v, update, renders } = await setup();
-  assert.equal(p.settings.autoSyncToCursor, true);
-  assert.equal(p.settings.autoSyncToScroll, false);
+  assert.equal(p.settings.outlineMode, 'cursor');
+  assert.equal(p.followsCursor(), true);
+  assert.equal(p.followsScroll(), false);
   update(1);
   await Promise.resolve();
   assert.equal(p.activeScrollPath.line, 1);
@@ -82,10 +84,10 @@ test('typing and focus changes follow the cursor; unrelated updates do not', asy
 
 test('disabled, unfocused, inactive, and reading views do not take over the outline', async () => {
   const { p, v, update, renders } = await setup();
-  p.settings.autoSyncToCursor = false;
+  p.settings.outlineMode = 'scroll';
   update(1);
   await Promise.resolve();
-  p.settings.autoSyncToCursor = true;
+  p.settings.outlineMode = 'cursor';
   update(1, v, { view: { hasFocus: false } });
   await Promise.resolve();
   p.app.workspace.getActiveViewOfType = () => null;
@@ -105,7 +107,7 @@ test('cursor cancels pending scroll sync and suppresses incidental scroll', asyn
   await Promise.resolve();
   assert.equal(p.scrollTimer, null);
   assert.ok(p.suppressScrollSyncUntil > Date.now());
-  p.settings.autoSyncToScroll = true;
+  p.settings.outlineMode = 'both';
   await p.updateActiveOutlineFromScroll();
   assert.equal(p.activeScrollPath.source, 'cursor');
 });

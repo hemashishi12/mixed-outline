@@ -19,8 +19,7 @@ const DEFAULT_SETTINGS = {
   stripMarkdownFormatting: true,
   maxItemLength: 160,
   openOnStartup: false,
-  autoSyncToScroll: false,
-  autoSyncToCursor: true,
+  outlineMode: "remember",
 };
 
 class MixedOutlinePlugin extends Plugin {
@@ -37,6 +36,19 @@ class MixedOutlinePlugin extends Plugin {
     this.scrollSyncVersion = 0;
     this.suppressScrollSyncUntil = 0;
     this.cursorSyncRequest = 0;
+    this.readingSections = new WeakMap();
+    this.readingRoot = null;
+    this.readingDocument = null;
+    this.readingHandler = null;
+
+    this.registerMarkdownPostProcessor((element, context) => {
+      // Section boundaries belong to the document; list data-line offsets belong
+      // to that section. Keep the context to resolve fresh bounds after rerenders.
+      this.readingSections.set(element, {
+        context, sourcePath: context.sourcePath,
+        file: this.app.vault.getAbstractFileByPath?.(context.sourcePath),
+      });
+    });
 
     this.registerEditorExtension(EditorView.updateListener.of((update) => {
       if (!update.view.hasFocus ||
@@ -87,7 +99,7 @@ class MixedOutlinePlugin extends Plugin {
 
     this.addCommand({
       id: "toggle-auto-sync-to-scroll",
-      name: "Toggle auto sync outline to scroll position",
+      name: "Toggle scroll following / 切换滚动跟随",
       callback: () => this.toggleAutoSyncToScroll(),
     });
 
@@ -149,6 +161,26 @@ class MixedOutlinePlugin extends Plugin {
       })
     );
 
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      this.cursorSyncRequest += 1;
+      this.syncReadingListener();
+      this.updateFoldViews(oldPath, file.path);
+      const paths = Object.keys(this.foldStateByFile).filter(path => path === oldPath || path.startsWith(`${oldPath}/`));
+      if (paths.length === 0) return;
+      for (const path of paths) {
+        this.foldStateByFile[file.path + path.slice(oldPath.length)] = this.foldStateByFile[path];
+        delete this.foldStateByFile[path];
+      }
+      this.persistData().catch(error => console.error("Mixed Outline: could not move fold state", error));
+    }));
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      this.updateFoldViews(file.path, null);
+      const paths = Object.keys(this.foldStateByFile).filter(path => path === file.path || path.startsWith(`${file.path}/`));
+      if (paths.length === 0) return;
+      for (const path of paths) delete this.foldStateByFile[path];
+      this.persistData().catch(error => console.error("Mixed Outline: could not remove fold state", error));
+    }));
+
     this.app.workspace.onLayoutReady(() => {
       this.captureCurrentMarkdownFile();
       this.syncScrollListener();
@@ -173,31 +205,119 @@ class MixedOutlinePlugin extends Plugin {
     }
 
     this.detachScrollListener();
+    this.detachReadingListener();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_MIXED_OUTLINE);
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const data = await this.loadData() ?? {};
+    const { foldStateByFile, outlineBehavior, autoSyncToCursor, autoSyncToScroll, ...settings } = data;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, settings);
+    if (!["remember", "cursor", "scroll", "both"].includes(settings.outlineMode)) {
+      // Preserve existing follow preferences; new installs start in remember mode.
+      const hasLegacyMode = ["outlineBehavior", "autoSyncToCursor", "autoSyncToScroll"]
+        .some(key => Object.prototype.hasOwnProperty.call(data, key));
+      const cursor = typeof autoSyncToCursor === "boolean" ? autoSyncToCursor : true;
+      const scroll = typeof autoSyncToScroll === "boolean" ? autoSyncToScroll : false;
+      this.settings.outlineMode = !hasLegacyMode || outlineBehavior === "remember"
+        ? "remember" : cursor ? (scroll ? "both" : "cursor") : (scroll ? "scroll" : "remember");
+    }
+    this.foldStateByFile = Object.create(null);
+    if (foldStateByFile && typeof foldStateByFile === "object" && !Array.isArray(foldStateByFile)) {
+      for (const [filePath, states] of Object.entries(foldStateByFile)) {
+        if (!states || typeof states !== "object" || Array.isArray(states)) continue;
+        this.foldStateByFile[filePath] = Object.fromEntries(
+          Object.entries(states).filter(([, collapsed]) => typeof collapsed === "boolean")
+        );
+      }
+    }
+  }
+
+  isFollowingOutline() {
+    return this.settings.outlineMode !== "remember";
+  }
+
+  followsCursor() {
+    return ["cursor", "both"].includes(this.settings.outlineMode);
+  }
+
+  followsScroll() {
+    return ["scroll", "both"].includes(this.settings.outlineMode);
+  }
+
+  persistData() {
+    // Serialize snapshots so a slow earlier write cannot overwrite a newer fold.
+    const data = JSON.parse(JSON.stringify({ ...this.settings, foldStateByFile: this.foldStateByFile }));
+    this.dataSavePromise = (this.dataSavePromise ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => this.saveData(data));
+    return this.dataSavePromise;
+  }
+
+  rememberFoldState(filePath, nodes, collapsed) {
+    // Keep preferences for nodes temporarily hidden by display settings.
+    const states = Object.assign(Object.create(null), this.foldStateByFile[filePath]);
+    for (const node of nodes) {
+      if (node.children.length > 0) states[node.foldKey] = collapsed.has(node.id);
+    }
+    this.foldStateByFile[filePath] = states;
+    return this.persistData().catch(error => {
+      console.error("Mixed Outline: could not save fold state", error);
+      new Notice("Mixed Outline: could not save outline folding. Please try again.");
+    });
+  }
+
+  updateFoldViews(oldPath, newPath) {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_MIXED_OUTLINE)) {
+      const view = leaf.view;
+      const path = view?.lastRenderedFilePath;
+      if (!(view instanceof MixedOutlineView) ||
+          !(path === oldPath || path?.startsWith(`${oldPath}/`))) continue;
+      view.renderVersion += 1;
+      if (newPath === null) {
+        view.lastRenderedFilePath = null;
+        view.lastNodes = [];
+        view.collapsed.clear();
+        view.activeNodeId = null;
+      } else {
+        view.lastRenderedFilePath = newPath + path.slice(oldPath.length);
+        for (const node of view.lastNodes) {
+          const previousId = node.id;
+          node.filePath = view.lastRenderedFilePath;
+          node.id = makeNodeId(node.filePath, node.type, node.line);
+          if (view.collapsed.delete(previousId)) view.collapsed.add(node.id);
+          if (view.activeNodeId === previousId) view.activeNodeId = node.id;
+        }
+      }
+    }
+    this.scheduleRefresh();
   }
 
   async saveSettings() {
-    await this.saveData(this.settings);
+    this.cursorSyncRequest += 1;
+    this.activeScrollPath = null;
+    if (this.scrollTimer) {
+      window.clearTimeout(this.scrollTimer);
+      this.scrollTimer = null;
+    }
+    this.detachScrollListener();
+    this.detachReadingListener();
+    this.suppressScrollSyncUntil = 0;
+    await this.persistData();
     this.syncScrollListener();
     this.scheduleCursorSync(this.getCurrentMarkdownView());
     await this.refreshViews();
   }
 
   async toggleAutoSyncToScroll() {
-    this.settings.autoSyncToScroll = !this.settings.autoSyncToScroll;
+    const nextMode = { remember: "scroll", scroll: "remember", cursor: "both", both: "cursor" };
+    this.settings.outlineMode = nextMode[this.settings.outlineMode];
     await this.saveSettings();
-    if (this.settings.autoSyncToScroll) {
-      this.scheduleScrollSync(0);
-    } else if (this.activeScrollPath?.source !== "cursor") {
-      this.activeScrollPath = null;
-    }
+    const tab = this.app.setting?.activeTab;
+    if (tab?.plugin === this) tab.display();
     new Notice(
       `Mixed Outline: auto sync to scroll ${
-        this.settings.autoSyncToScroll ? "enabled" : "disabled"
+        this.followsScroll() ? "enabled" : "disabled"
       }`
     );
   }
@@ -274,11 +394,11 @@ class MixedOutlinePlugin extends Plugin {
   }
 
   scheduleCursorSync(view, line = view?.editor?.getCursor?.().line) {
-    if (!this.settings.autoSyncToCursor || !Number.isFinite(line)) return;
+    if (!this.followsCursor() || !Number.isFinite(line)) return;
     const request = ++this.cursorSyncRequest;
     // Finish the CodeMirror update first, without waiting for a debounce timer.
     Promise.resolve().then(() => {
-      if (request !== this.cursorSyncRequest || !this.settings.autoSyncToCursor ||
+      if (request !== this.cursorSyncRequest || !this.followsCursor() ||
           !(view instanceof MarkdownView) || !view.file ||
           view.getMode() !== "source" ||
           this.app.workspace.getActiveViewOfType(MarkdownView) !== view) return;
@@ -297,10 +417,111 @@ class MixedOutlinePlugin extends Plugin {
     }).catch(error => console.error("Mixed Outline: cursor sync failed", error));
   }
 
+  getReadingRoot(view) {
+    return view.previewMode?.containerEl ?? view.contentEl?.querySelector?.(".markdown-preview-view");
+  }
+
+  getReadingLine(view, target) {
+    if (view.getMode?.() !== "preview" || !view.file) return null;
+    const root = this.getReadingRoot(view);
+    const element = target?.nodeType === 1 ? target : target?.parentElement;
+    if (!element || !root?.contains(element) || element.isConnected === false ||
+        element.closest?.(".markdown-embed, .internal-embed")) return null;
+    let section = element;
+    while (section && root.contains(section)) {
+      const record = this.readingSections.get(section);
+      if (record) {
+        if ((record.file?.path ?? record.sourcePath) !== view.file.path ||
+            (record.file && record.file !== view.file)) return null;
+        let info;
+        try { info = record.context.getSectionInfo(section); } catch { return null; }
+        if (!Number.isInteger(info?.lineStart) || info.lineStart < 0 ||
+            !Number.isInteger(info.lineEnd) || info.lineEnd < info.lineStart) return null;
+        const item = element.closest?.("li[data-line]");
+        if (item && section.contains(item)) {
+          const offset = item.getAttribute("data-line");
+          if (!/^\d+$/.test(offset ?? "")) return null;
+          const line = info.lineStart + Number(offset);
+          return Number.isSafeInteger(line) && line <= info.lineEnd ? line : null;
+        }
+        return info.lineStart;
+      }
+      if (section === root) break;
+      section = section.parentElement;
+    }
+    return null;
+  }
+
+  scheduleReadingSync(view, line) {
+    if (!this.followsCursor() || !Number.isInteger(line) || line < 0 || !view?.file) return;
+    const filePath = view.file.path;
+    const request = ++this.cursorSyncRequest;
+    Promise.resolve().then(() => {
+      if (request !== this.cursorSyncRequest || !this.followsCursor() ||
+          !(view instanceof MarkdownView) || view.getMode() !== "preview" ||
+          view.file?.path !== filePath || this.getCurrentMarkdownView() !== view ||
+          (this.app.vault.getAbstractFileByPath &&
+           this.app.vault.getAbstractFileByPath(filePath) !== view.file)) return;
+      if (this.scrollTimer) {
+        window.clearTimeout(this.scrollTimer);
+        this.scrollTimer = null;
+      }
+      this.suppressScrollSync(200);
+      this.currentFile = view.file;
+      this.pendingEditorText = null;
+      this.activeScrollPath = { filePath, line, source: "cursor" };
+      this.scrollSyncVersion += 1;
+      return this.refreshViews();
+    }).catch(error => console.error("Mixed Outline: reading selection sync failed", error));
+  }
+
+  syncReadingListener() {
+    this.detachReadingListener();
+    if (!this.followsCursor()) return;
+    const view = this.getCurrentMarkdownView();
+    if (!(view instanceof MarkdownView) || view.getMode() !== "preview" || !view.file) return;
+    const root = this.getReadingRoot(view);
+    if (!root?.ownerDocument) return;
+    const doc = root.ownerDocument;
+    const filePath = view.file.path;
+    const handler = event => {
+      if (this.readingRoot !== root || view.file?.path !== filePath ||
+          (event.type === "pointerup" && event.button > 0)) return;
+      const interactive = 'a, button, input, textarea, select, [contenteditable="true"], .collapse-indicator';
+      const eventElement = event.target?.nodeType === 1 ? event.target : event.target?.parentElement;
+      if (eventElement?.closest?.(interactive)) return;
+      const selection = doc.getSelection();
+      const target = event.type === "pointerup" && (!selection || selection.isCollapsed)
+        ? event.target : selection?.focusNode;
+      const element = target?.nodeType === 1 ? target : target?.parentElement;
+      if (element?.closest?.(interactive)) return;
+      const line = this.getReadingLine(view, target);
+      if (line !== null) this.scheduleReadingSync(view, line);
+    };
+    this.readingRoot = root;
+    this.readingDocument = doc;
+    this.readingHandler = handler;
+    root.addEventListener("pointerup", handler);
+    // selectionchange also covers keyboard selection. Keyup alone can report
+    // an old selection after PageDown scrolls, overriding scroll following.
+    doc.addEventListener("selectionchange", handler);
+  }
+
+  detachReadingListener() {
+    if (this.readingHandler) {
+      this.readingRoot?.removeEventListener("pointerup", this.readingHandler);
+      this.readingDocument?.removeEventListener("selectionchange", this.readingHandler);
+    }
+    this.readingRoot = null;
+    this.readingDocument = null;
+    this.readingHandler = null;
+  }
+
   syncScrollListener() {
+    this.syncReadingListener();
     this.detachScrollListener();
 
-    if (!this.settings.autoSyncToScroll) {
+    if (!this.followsScroll()) {
       return;
     }
 
@@ -330,7 +551,7 @@ class MixedOutlinePlugin extends Plugin {
   }
 
   scheduleScrollSync(delay = 80) {
-    if (!this.settings.autoSyncToScroll) {
+    if (!this.followsScroll()) {
       return;
     }
 
@@ -349,7 +570,7 @@ class MixedOutlinePlugin extends Plugin {
   }
 
   async updateActiveOutlineFromScroll() {
-    if (!this.settings.autoSyncToScroll) {
+    if (!this.followsScroll()) {
       return;
     }
 
@@ -409,6 +630,12 @@ class MixedOutlinePlugin extends Plugin {
   }
 
   async revealNode(node) {
+    if (!node || typeof node.filePath !== "string" ||
+        !Number.isInteger(node.line) || node.line < 0) {
+      return;
+    }
+
+    const request = this.revealNodeRequest = (this.revealNodeRequest ?? 0) + 1;
     const file = this.app.vault.getAbstractFileByPath(node.filePath);
     if (!(file instanceof TFile)) {
       new Notice("Mixed Outline: file not found");
@@ -428,17 +655,28 @@ class MixedOutlinePlugin extends Plugin {
     }
 
     const view = leaf.view;
-    if (!(view instanceof MarkdownView)) {
+    // Opening a closed note is asynchronous. A later click or file switch must
+    // not move the cursor in the note that replaced the requested target.
+    if (request !== this.revealNodeRequest || !(view instanceof MarkdownView) ||
+        view.file?.path !== file.path) {
       return;
     }
 
-    const pos = { line: node.line, ch: node.ch ?? 0 };
-    view.editor.setCursor(pos);
-    view.editor.scrollIntoView({ from: pos, to: pos }, true);
-    view.editor.focus();
+    if (view.getMode() === "preview") {
+      // Obsidian applies the line after the preview is ready. Rendered data-line
+      // attributes can be block-relative, so they cannot locate a document line.
+      leaf.setEphemeralState({ line: node.line, focus: true });
+      this.pendingEditorText = null;
+      this.scheduleReadingSync(view, node.line);
+    } else {
+      const pos = { line: node.line, ch: node.ch ?? 0 };
+      view.editor.setCursor(pos);
+      view.editor.scrollIntoView({ from: pos, to: pos }, true);
+      view.editor.focus();
+      this.pendingEditorText = view.editor.getValue();
+    }
 
     this.currentFile = file;
-    this.pendingEditorText = view.editor.getValue();
   }
 
   async jumpToStart() {
@@ -549,6 +787,8 @@ class MixedOutlineView extends ItemView {
     this.lastNodes = [];
     this.lastRenderedFilePath = null;
     this.lastAppliedScrollSyncVersion = -1;
+    this.lastOutlineBehavior = null;
+    this.renderVersion = 0;
   }
 
   getViewType() {
@@ -569,7 +809,9 @@ class MixedOutlineView extends ItemView {
   }
 
   async render() {
+    const renderVersion = ++this.renderVersion;
     const { file, source } = await this.plugin.getOutlineSource();
+    if (renderVersion !== this.renderVersion) return;
     const container = this.contentEl;
     const previousTreeEl = container.querySelector(".mixed-outline-tree");
     const previousScrollTop = previousTreeEl?.scrollTop ?? 0;
@@ -618,18 +860,24 @@ class MixedOutlineView extends ItemView {
     }
 
     const root = buildMixedOutlineTree(source, file.path, this.plugin.settings);
+    assignFoldKeys(root.children, source);
     this.lastNodes = flattenTree(root.children);
+    const remember = !this.plugin.isFollowingOutline();
     const syncEnabled = this.plugin.activeScrollPath?.source === "cursor"
-      ? this.plugin.settings.autoSyncToCursor
-      : this.plugin.settings.autoSyncToScroll;
+      ? this.plugin.followsCursor()
+      : this.plugin.followsScroll();
     const hasScrollSyncForFile =
+      !remember &&
       syncEnabled &&
       this.plugin.activeScrollPath?.filePath === file.path;
     const shouldSyncToScroll =
       hasScrollSyncForFile &&
       this.lastAppliedScrollSyncVersion !== this.plugin.scrollSyncVersion;
 
-    if (shouldSyncToScroll) {
+    if (remember) {
+      this.restoreFoldState(root.children, file.path);
+      this.activeNodeId = null;
+    } else if (shouldSyncToScroll) {
       this.syncCollapsedToLine(root.children, this.plugin.activeScrollPath.line,
         this.plugin.activeScrollPath.source === "cursor");
       this.lastAppliedScrollSyncVersion = this.plugin.scrollSyncVersion;
@@ -637,11 +885,13 @@ class MixedOutlineView extends ItemView {
       this.activeNodeId = null;
     }
 
-    if (!shouldSyncToScroll && previousFilePath !== file.path) {
+    if (!remember && !shouldSyncToScroll &&
+        (previousFilePath !== file.path || this.lastOutlineBehavior !== "follow")) {
       this.collapsed.clear();
       this.collapseNodesDeeperThanDepth(root.children, 0);
     }
     this.lastRenderedFilePath = file.path;
+    this.lastOutlineBehavior = remember ? "remember" : "follow";
 
     if (root.children.length === 0) {
       container.createDiv({
@@ -718,7 +968,7 @@ class MixedOutlineView extends ItemView {
     }
   }
 
-  toggleNode(node) {
+  async toggleNode(node) {
     this.lastAppliedScrollSyncVersion = this.plugin.scrollSyncVersion;
 
     if (this.collapsed.has(node.id)) {
@@ -727,19 +977,22 @@ class MixedOutlineView extends ItemView {
       this.collapsed.add(node.id);
     }
 
-    this.render();
+    await this.rememberFoldState();
+    await this.render();
   }
 
-  expandNode(node) {
+  async expandNode(node) {
     this.lastAppliedScrollSyncVersion = this.plugin.scrollSyncVersion;
     this.collapsed.delete(node.id);
-    this.render();
+    await this.rememberFoldState();
+    await this.render();
   }
 
-  collapseAll() {
+  async collapseAll() {
     this.lastAppliedScrollSyncVersion = this.plugin.scrollSyncVersion;
     this.collapseNodesWithChildren(this.lastNodes);
-    this.render();
+    await this.rememberFoldState();
+    await this.render();
   }
 
   collapseNodesWithChildren(nodes) {
@@ -750,11 +1003,28 @@ class MixedOutlineView extends ItemView {
     }
   }
 
-  expandAll() {
+  async expandAll() {
     this.lastAppliedScrollSyncVersion = this.plugin.scrollSyncVersion;
     this.collapsed.clear();
     this.activeNodeId = null;
-    this.render();
+    await this.rememberFoldState();
+    await this.render();
+  }
+
+  rememberFoldState() {
+    if (this.plugin.isFollowingOutline() || !this.lastRenderedFilePath) return;
+    return this.plugin.rememberFoldState(this.lastRenderedFilePath, this.lastNodes, this.collapsed);
+  }
+
+  restoreFoldState(nodes, filePath) {
+    this.collapsed.clear();
+    this.collapseNodesDeeperThanDepth(nodes, 0);
+    const states = this.plugin.foldStateByFile[filePath] ?? {};
+    for (const node of flattenTree(nodes)) {
+      if (node.children.length === 0) continue;
+      if (states[node.foldKey] === true) this.collapsed.add(node.id);
+      else if (states[node.foldKey] === false) this.collapsed.delete(node.id);
+    }
   }
 
   syncCollapsedToLine(nodes, line, expandActive = false) {
@@ -854,34 +1124,18 @@ class MixedOutlineSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Follow cursor / 跟随光标")
-      .setDesc("Immediately highlight and expand the outline at the cursor when clicking, moving with arrow keys, or editing. / 点击、方向键移动或编辑时，立即展开光标对应的大纲。")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.autoSyncToCursor).onChange(async (value) => {
-          this.plugin.settings.autoSyncToCursor = value;
-          if (!value && this.plugin.activeScrollPath?.source === "cursor") {
-            this.plugin.activeScrollPath = null;
-          }
+      .setName("Outline mode / 大纲模式")
+      .setDesc("Remember manual folds, follow the cursor or clicked/selected text in Reading view, follow scrolling, or both. / 默认按文件记住手动折叠；跟随光标在阅读模式中跟随点击或选中文字，也可选择滚动跟随或两者。")
+      .addDropdown(dropdown => dropdown
+        .addOption("remember", "Remember manual folding per file / 按文件记住手动折叠")
+        .addOption("cursor", "Follow cursor / 跟随光标")
+        .addOption("scroll", "Follow scroll / 跟随滚动")
+        .addOption("both", "Follow cursor and scroll / 同时跟随光标与滚动")
+        .setValue(this.plugin.settings.outlineMode)
+        .onChange(async value => {
+          this.plugin.settings.outlineMode = value;
           await this.plugin.saveSettings();
         })
-      );
-
-    new Setting(containerEl)
-      .setName("Auto sync to scroll position")
-      .setDesc("While browsing a Markdown file, expand only the outline path for the visible position and collapse other branches.")
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.autoSyncToScroll)
-          .onChange(async (value) => {
-            this.plugin.settings.autoSyncToScroll = value;
-            if (!value) {
-              this.plugin.activeScrollPath = null;
-            }
-            await this.plugin.saveSettings();
-            if (value) {
-              this.plugin.scheduleScrollSync(0);
-            }
-          })
       );
   }
 }
@@ -923,11 +1177,9 @@ function parseMixedOutlineEntries(source, filePath, settings) {
   const entries = [];
   const headingStack = [];
   const listStack = [];
-  const hiddenListStack = [];
   let nextListRunId = 1;
-  let inFence = false;
-  let fenceChar = "";
-  let fenceLength = 0;
+  let fence = null;
+  let afterBlank = false;
   let inFrontmatter = lines[0]?.trim() === "---";
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -940,25 +1192,39 @@ function parseMixedOutlineEntries(source, filePath, settings) {
       continue;
     }
 
-    const fence = line.match(/^ {0,3}(`{3,}|~{3,})/);
-    if (fence) {
-      const marker = fence[1];
-      if (!inFence) {
-        inFence = true;
-        fenceChar = marker[0];
-        fenceLength = marker.length;
-      } else if (marker[0] === fenceChar && marker.length >= fenceLength) {
-        inFence = false;
-      }
+    if (!line.trim()) {
+      afterBlank = true;
       continue;
     }
 
-    if (inFence) {
-      continue;
+    const indent = getVisualIndent(line.match(/^[ \t]*/)[0]);
+    if (fence) {
+      // A fence nested in a list ends when the containing item ends, even if
+      // the author did not include a closing fence before the next item.
+      if (indent >= fence.contentIndent) {
+        const closing = line.trim().match(/^(`{3,}|~{3,})[ \t]*$/);
+        if (
+          indent <= fence.contentIndent + 3 &&
+          closing &&
+          closing[1][0] === fence.char &&
+          closing[1].length >= fence.length
+        ) {
+          fence = null;
+          afterBlank = true;
+        }
+        continue;
+      }
+      fence = null;
     }
 
     const heading = parseHeading(line, settings);
     if (heading) {
+      while (listStack.length && indent < listStack[listStack.length - 1].contentIndent) {
+        listStack.pop();
+      }
+      if (listStack[listStack.length - 1]?.hidden) {
+        continue;
+      }
       while (
         headingStack.length > 0 &&
         headingStack[headingStack.length - 1].level >= heading.level
@@ -968,8 +1234,7 @@ function parseMixedOutlineEntries(source, filePath, settings) {
 
       headingStack.push({ level: heading.level, line: index });
       listStack.length = 0;
-      hiddenListStack.length = 0;
-      nextListRunId += 1;
+      afterBlank = false;
 
       if (settings.showHeadings) {
         entries.push({
@@ -988,41 +1253,72 @@ function parseMixedOutlineEntries(source, filePath, settings) {
       continue;
     }
 
-    const listItem = parseListItem(line, settings);
+    const thematicBreak = /^ {0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(line);
+    const listItem = thematicBreak ? null : parseListItem(line, settings);
     if (!listItem) {
-      listStack.length = 0;
-      hiddenListStack.length = 0;
-      nextListRunId += 1;
+      const opening = line.trim().match(/^(`{3,}|~{3,})(.*)$/);
+      // Loose lists retain their ancestry across blank/continuation lines.
+      // A dedented paragraph after a blank or an explicit block boundary ends it.
+      if (afterBlank || opening || /^\s*>/.test(line) || thematicBreak) {
+        while (listStack.length && indent < listStack[listStack.length - 1].contentIndent) {
+          listStack.pop();
+        }
+      }
+      const parent = listStack[listStack.length - 1];
+      const contentIndent = parent?.contentIndent ?? 0;
+      if (
+        opening &&
+        indent >= contentIndent && indent <= contentIndent + 3 &&
+        (opening[1][0] !== "`" || !opening[2].includes("`"))
+      ) {
+        fence = { char: opening[1][0], length: opening[1].length, contentIndent };
+      }
+      afterBlank = Boolean(opening || thematicBreak || /^\s*>/.test(line));
       continue;
     }
 
-    const indent = getVisualIndent(listItem.indent);
-    while (
-      hiddenListStack.length > 0 &&
-      indent <= hiddenListStack[hiddenListStack.length - 1]
-    ) {
-      hiddenListStack.pop();
-    }
-
-    if (listItem.hidden || hiddenListStack.length > 0) {
-      hiddenListStack.push(indent);
-      listStack.length = 0;
-      nextListRunId += 1;
-      continue;
-    }
-
-    if (listStack.length === 0 && indent >= 4) {
-      continue;
-    }
-
-    while (listStack.length > 0 && indent <= listStack[listStack.length - 1].indent) {
-      listStack.pop();
+    let previousSibling = null;
+    while (listStack.length && indent < listStack[listStack.length - 1].contentIndent) {
+      previousSibling = listStack.pop();
     }
 
     const parentList = listStack[listStack.length - 1];
+    const contentIndent = parentList?.contentIndent ?? 0;
+    if (indent >= contentIndent + 4) {
+      // Four extra columns are an indented code block, not a nested list.
+      afterBlank = false;
+      continue;
+    }
+
     const listRunId =
-      parentList && indent > parentList.indent ? parentList.runId : nextListRunId;
-    listStack.push({ indent, line: index, runId: listRunId });
+      previousSibling &&
+      previousSibling.ordered === listItem.ordered &&
+      previousSibling.delimiter === listItem.marker.slice(-1)
+        ? previousSibling.runId
+        : nextListRunId++;
+    const hidden = listItem.hidden || Boolean(parentList?.hidden);
+    listStack.push({
+      indent,
+      contentIndent: listItem.contentIndent,
+      line: index,
+      runId: listRunId,
+      ordered: listItem.ordered,
+      delimiter: listItem.marker.slice(-1),
+      hidden,
+    });
+    afterBlank = false;
+
+    const opening = listItem.rawText.match(/^(`{3,}|~{3,})(.*)$/);
+    if (opening && (opening[1][0] !== "`" || !opening[2].includes("`"))) {
+      fence = {
+        char: opening[1][0], length: opening[1].length,
+        contentIndent: listItem.contentIndent,
+      };
+    }
+
+    if (hidden) {
+      continue;
+    }
 
     const baseHeadingLevel =
       headingStack.length > 0 ? headingStack[headingStack.length - 1].level : 0;
@@ -1064,7 +1360,7 @@ function parseHeading(line, settings) {
 }
 
 function parseListItem(line, settings) {
-  const match = line.match(/^([ \t]*)(?:(\d{1,9})([.)])|([-+*]))[ \t]+(.*)$/);
+  const match = line.match(/^([ \t]*)(?:(\d{1,9})([.)])|([-+*]))(?:([ \t]+)(.*)|$)/);
   if (!match) {
     return null;
   }
@@ -1072,19 +1368,23 @@ function parseListItem(line, settings) {
   const ordered = match[2] != null;
   const marker = ordered ? `${match[2]}${match[3]}` : match[4];
   const startNumber = ordered ? Number.parseInt(match[2], 10) : null;
-  const rawText = match[5] ?? "";
-  const task = /^\[[ xX-]\][ \t]+/.test(rawText);
+  const rawText = match[6] ?? "";
+  const task = /^\[[ xX-]\](?:[ \t]+|$)/.test(rawText);
+  const markerEnd = getVisualIndent(match[1]) + marker.length;
+  const padding = getVisualIndent(match[5] ?? " ", markerEnd) - markerEnd;
 
   const hidden = task || !ordered || !settings.showOrderedLists;
 
   return {
     indent: match[1],
+    contentIndent: markerEnd + (padding <= 4 ? padding : 1),
+    rawText,
     ordered,
     marker,
     startNumber,
     task,
     hidden,
-    title: cleanDisplayText(rawText.replace(/^\[[ xX-]\][ \t]+/, ""), settings),
+    title: cleanDisplayText(rawText.replace(/^\[[ xX-]\](?:[ \t]+|$)/, ""), settings),
     ch: match[1].length,
   };
 }
@@ -1153,16 +1453,48 @@ function cleanDisplayText(text, settings) {
   return value;
 }
 
-function getVisualIndent(indent) {
-  let width = 0;
+function getVisualIndent(indent, startColumn = 0) {
+  let width = startColumn;
   for (const char of indent) {
-    width += char === "\t" ? 4 : 1;
+    width += char === "\t" ? 4 - (width % 4) : 1;
   }
   return width;
 }
 
 function makeNodeId(filePath, type, line) {
   return `${filePath}:${type}:${line}`;
+}
+
+function assignFoldKeys(nodes, source) {
+  const lines = source.split(/\r\n|\n|\r/);
+  function visit(children, parentKey = "") {
+    const occurrences = new Map();
+    for (const node of children) {
+      const label = String(lines[node.line] ?? node.title)
+        .replace(node.type === "heading" ? /^ {0,3}#{1,6}(?:[ \t]+|$)/ : /^[ \t]*\d{1,9}[.)][ \t]+/, "")
+        .replace(node.type === "heading" ? /[ \t]+#+[ \t]*$/ : /$^/, "")
+        .trim().replace(/[ \t]+/g, " ");
+      const identity = `${node.type}:${hashFoldIdentity(label)}`;
+      const occurrence = occurrences.get(identity) ?? 0;
+      occurrences.set(identity, occurrence + 1);
+      node.foldKey = `${parentKey}/${identity}:${occurrence}`;
+      visit(node.children, node.foldKey);
+    }
+  }
+  visit(nodes);
+}
+
+function hashFoldIdentity(value) {
+  // Store opaque identities, not note titles. Two independent 32-bit hashes
+  // keep keys compact without relying on Node APIs (the plugin also runs mobile).
+  let first = 2166136261;
+  let second = 5381;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value.charCodeAt(index);
+    first = Math.imul(first ^ char, 16777619);
+    second = Math.imul(second, 33) ^ char;
+  }
+  return `${(first >>> 0).toString(36)}.${(second >>> 0).toString(36)}`;
 }
 
 function flattenTree(nodes) {
@@ -1262,6 +1594,7 @@ function scrollNodeIntoView(treeEl, nodeId) {
 }
 
 function getCurrentVisibleLine(view) {
+  if (view.getMode?.() === "preview") return getPreviewVisibleLine(view);
   const editor = view.editor;
 
   try {
@@ -1286,41 +1619,14 @@ function getCurrentVisibleLine(view) {
 }
 
 function getPreviewVisibleLine(view) {
-  const scrollEl = getMarkdownScrollElement(view);
-  if (!scrollEl) {
+  try {
+    // Reading view reports its document line through the public view state.
+    // DOM data-line markers are block-relative; the hidden editor is unrelated.
+    const scroll = view.getEphemeralState?.()?.scroll;
+    return Number.isFinite(scroll) ? Math.max(0, Math.floor(scroll)) : null;
+  } catch (error) {
     return null;
   }
-
-  const markers = [...view.contentEl.querySelectorAll("[data-line]")];
-  const scrollRect = scrollEl.getBoundingClientRect();
-  let bestLine = null;
-  let bestTop = Number.NEGATIVE_INFINITY;
-
-  for (const marker of markers) {
-    const line = Number.parseInt(marker.getAttribute("data-line"), 10);
-    if (!Number.isFinite(line)) {
-      continue;
-    }
-
-    const rect = marker.getBoundingClientRect();
-    if (rect.top <= scrollRect.top + 24 && rect.top > bestTop) {
-      bestTop = rect.top;
-      bestLine = line;
-    }
-  }
-
-  if (bestLine != null) {
-    return bestLine;
-  }
-
-  const firstVisible = markers.find((marker) => {
-    const rect = marker.getBoundingClientRect();
-    return rect.bottom >= scrollRect.top && rect.top <= scrollRect.bottom;
-  });
-
-  return firstVisible
-    ? Number.parseInt(firstVisible.getAttribute("data-line"), 10)
-    : null;
 }
 
 function getMarkdownScrollElement(view) {
@@ -1351,6 +1657,8 @@ function isMarkdownFile(file) {
 
 module.exports = MixedOutlinePlugin;
 module.exports.__test = {
+  MixedOutlineView,
+  assignFoldKeys,
   buildMixedOutlineTree,
   parseMixedOutlineEntries,
   addDisplayMarkers,

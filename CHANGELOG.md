@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.4.0 — 2026-10-25
+
+- Replace separate behavior/follow controls with one **Outline mode / 大纲模式** dropdown: **Remember manual folding per file / 按文件记住手动折叠** (default for new installations), **Follow cursor / 跟随光标**, **Follow scroll / 跟随滚动**, and **Follow cursor and scroll / 同时跟随光标与滚动**. Following never overwrites saved manual folds.
+- Preserve a valid selected mode and remembered folds on upgrade. Keep older remember-mode settings; otherwise migrate the previous cursor/scroll combination to its matching mode, including both when both were enabled. Both disabled or no prior mode/follow settings use remember mode. The new-installation default does not override existing follow preferences.
+- Rename the existing scroll-sync command to **Toggle scroll following / 切换滚动跟随** while retaining its command ID and hotkeys. It switches remember ↔ scroll or cursor ↔ both; disabling scroll-only following returns to remember mode.
+- Restore manual expansion/collapse after switching notes, sidebar recreation, and plugin reload. Use line-independent hashed identities; migrate state on file/folder renames and clean it on deletion. Serialize saves and ignore stale renders.
+- Fix missing/misparented ordered siblings after unordered/task details, blank lines, and continuation paragraphs. Preserve list numbering and exclude hidden descendants and nested code blocks.
+- Integrate the Reading view navigation fix identified in PR #3 using public `setEphemeralState`, with asynchronous-target guards. Read preview scroll position through public view state instead of hidden-editor or relative DOM coordinates.
+- Support all four outline modes in Reading view: cursor following responds to rendered-note clicks and text selections, scroll following tracks the visible section, combined following responds to both, and remember mode keeps manual folds. Resolve clicked/selected lines through current Markdown postprocessor section information and validated list-relative offsets.
+- Add regression coverage for folding persistence, mode interactions, list parsing, and Reading view navigation. All 150 automated tests pass, including 25 Reading-view tests; 40 desktop Obsidian checks cover the Reading-mode changes. Mobile and the minimum supported app version have not been separately tested.
+
 ## 1.3.0 — 2026-10-25
 
 ### Added
